@@ -1,12 +1,13 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Spinner } from '@/components/ui/Spinner'
-import { DOCUMENT_TYPES, DOCUMENT_CATEGORIES } from '@/lib/utils'
+import { DOCUMENT_CATEGORIES, getDocumentTypesForStream } from '@/lib/utils'
 import { STUDENT_DOCUMENTS_BUCKET, getStorageErrorMessage } from '@/lib/supabase/storage'
 import { Upload, FileText, CheckCircle, X, RefreshCw, GraduationCap, Award, User, FileCheck, FolderPlus, File, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -28,16 +29,43 @@ interface UploadedDoc {
 }
 
 export default function DocumentsPage() {
+  const router = useRouter()
   const [documents, setDocuments] = useState<UploadedDoc[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedFiles, setSelectedFiles] = useState<Record<string, File>>({})
   const [uploading, setUploading] = useState(false)
   const [extracting, setExtracting] = useState(false)
+  const [hasApplication, setHasApplication] = useState<boolean | null>(null)
+  const [academicStream, setAcademicStream] = useState<string | null>(null)
+
+  const docTypes = getDocumentTypesForStream(academicStream)
 
   const fetchDocuments = useCallback(async () => {
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
+
+    const { data: appData, error: appError } = await supabase
+      .from('applications')
+      .select('academic_stream')
+      .eq('student_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (appError) {
+      console.error('[documents] application lookup error', appError)
+    }
+
+    if (!appData) {
+      setHasApplication(false)
+      setDocuments([])
+      setLoading(false)
+      return
+    }
+
+    setHasApplication(true)
+    setAcademicStream(appData.academic_stream || 'PCM')
 
     const { data } = await supabase
       .from('documents')
@@ -182,12 +210,34 @@ export default function DocumentsPage() {
 
   const getDocForType = (type: string) => documents.find(d => d.document_type === type)
 
-  const requiredDocs = DOCUMENT_TYPES.filter(dt => dt.required)
+  const requiredDocs = docTypes.filter(dt => dt.required)
   const uploadedRequiredCount = requiredDocs.filter(dt => getDocForType(dt.id)).length
-  const uploadedTotalCount = DOCUMENT_TYPES.filter(dt => getDocForType(dt.id)).length
+  const uploadedTotalCount = docTypes.filter(dt => getDocForType(dt.id)).length
 
-  const getDocsForCategory = (categoryId: string) => 
-    DOCUMENT_TYPES.filter(dt => dt.category === categoryId)
+  const getDocsForCategory = (categoryId: string) =>
+    docTypes.filter(dt => dt.category === categoryId)
+
+  if (hasApplication === false) {
+    return (
+      <div className="max-w-3xl mx-auto space-y-8">
+        <Card className="border-amber-500/30 bg-amber-500/5">
+          <div className="space-y-3">
+            <p className="text-amber-300 font-medium">Submit your application first</p>
+            <p className="text-slate-300 text-sm">
+              You can upload documents only after you submit the “Apply for Course” form.
+            </p>
+            <div className="flex gap-3">
+              <Button onClick={() => router.push('/student/apply')}>Go to Apply Form</Button>
+              <Button variant="ghost" onClick={fetchDocuments} className="gap-2">
+                <RefreshCw className="h-4 w-4" />
+                Refresh
+              </Button>
+            </div>
+          </div>
+        </Card>
+      </div>
+    )
+  }
 
   return (
     <div className="max-w-3xl mx-auto space-y-8">
@@ -390,7 +440,7 @@ export default function DocumentsPage() {
             {/* List selected files */}
             <div className="flex flex-wrap gap-2">
               {Object.entries(selectedFiles).map(([docType, file]) => {
-                const docLabel = DOCUMENT_TYPES.find(d => d.id === docType)?.label || docType
+                const docLabel = docTypes.find(d => d.id === docType)?.label || docType
                 return (
                   <span
                     key={docType}

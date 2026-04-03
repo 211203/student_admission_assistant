@@ -46,24 +46,76 @@ export const COURSES = [
   'Biotechnology',
 ]
 
+export const ACADEMIC_STREAMS = [
+  { value: 'PCM', label: 'PCM (Physics, Chemistry, Mathematics)' },
+  { value: 'PCB', label: 'PCB (Physics, Chemistry, Biology)' },
+  { value: 'PCMB', label: 'PCMB (Physics, Chemistry, Math & Biology)' },
+]
+
+// Base document types that are common for all streams
+export const BASE_DOCUMENT_TYPES = [
+  // Academic Documents (Required for all)
+  { id: '10th_marksheet', label: '10th Marksheet', category: 'academic', required: true },
+  { id: '12th_marksheet', label: '12th Marksheet', category: 'academic', required: true },
+  { id: 'leaving_certificate', label: 'Leaving Certificate (LC/TC)', category: 'academic', required: true },
+
+  // Identity & Personal Documents (Required for all)
+  { id: 'id_proof', label: 'ID Proof (Aadhar/PAN)', category: 'identity', required: true },
+  { id: 'photo', label: 'Passport Photo', category: 'identity', required: true },
+
+  // Category & Income Certificates (Optional for all)
+  { id: 'caste_certificate', label: 'Caste Certificate', category: 'category', required: false },
+  { id: 'income_certificate', label: 'Income Certificate', category: 'category', required: false },
+
+  // Additional Documents (Optional for all)
+  { id: 'gap_certificate', label: 'Gap Certificate', category: 'additional', required: false },
+]
+
+// Entrance exam documents based on academic stream
+export const ENTRANCE_EXAM_DOCUMENTS = {
+  jee_scorecard: { id: 'jee_scorecard', label: 'JEE Scorecard', category: 'entrance', required: true },
+  neet_scorecard: { id: 'neet_scorecard', label: 'NEET Scorecard', category: 'entrance', required: true },
+  mht_cet_scorecard: { id: 'mht_cet_scorecard', label: 'MHT-CET Scorecard', category: 'entrance', required: true },
+}
+
+// Map academic stream to required entrance exam documents
+export const STREAM_DOCUMENT_MAP: Record<string, string[]> = {
+  PCM: ['jee_scorecard', 'mht_cet_scorecard'],
+  PCB: ['neet_scorecard', 'mht_cet_scorecard'],
+  PCMB: ['jee_scorecard', 'neet_scorecard', 'mht_cet_scorecard'],
+}
+
+// Get all document types for a specific academic stream
+export function getDocumentTypesForStream(academicStream: string | null) {
+  const entranceDocIds = STREAM_DOCUMENT_MAP[academicStream || 'PCM'] || STREAM_DOCUMENT_MAP.PCM
+  const entranceDocs = entranceDocIds.map(id => ENTRANCE_EXAM_DOCUMENTS[id as keyof typeof ENTRANCE_EXAM_DOCUMENTS])
+
+  // Insert entrance docs after academic category
+  const academicDocs = BASE_DOCUMENT_TYPES.filter(d => d.category === 'academic')
+  const otherDocs = BASE_DOCUMENT_TYPES.filter(d => d.category !== 'academic')
+  return [...academicDocs, ...entranceDocs, ...otherDocs]
+}
+
+// Legacy export for backward compatibility (all documents)
 export const DOCUMENT_TYPES = [
   // Academic Documents (Required)
   { id: '10th_marksheet', label: '10th Marksheet', category: 'academic', required: true },
   { id: '12th_marksheet', label: '12th Marksheet', category: 'academic', required: true },
   { id: 'leaving_certificate', label: 'Leaving Certificate (LC/TC)', category: 'academic', required: true },
-  
+
   // Entrance Exam Scorecards
   { id: 'mht_cet_scorecard', label: 'MHT-CET Scorecard', category: 'entrance', required: false },
   { id: 'jee_scorecard', label: 'JEE Scorecard', category: 'entrance', required: false },
-  
+  { id: 'neet_scorecard', label: 'NEET Scorecard', category: 'entrance', required: false },
+
   // Identity & Personal Documents (Required)
   { id: 'id_proof', label: 'ID Proof (Aadhar/PAN)', category: 'identity', required: true },
   { id: 'photo', label: 'Passport Photo', category: 'identity', required: true },
-  
+
   // Category & Income Certificates (Optional)
   { id: 'caste_certificate', label: 'Caste Certificate', category: 'category', required: false },
   { id: 'income_certificate', label: 'Income Certificate', category: 'category', required: false },
-  
+
   // Additional Documents (Optional)
   { id: 'gap_certificate', label: 'Gap Certificate', category: 'additional', required: false },
 ]

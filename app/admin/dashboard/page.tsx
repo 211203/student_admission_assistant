@@ -1,13 +1,15 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Card } from '@/components/ui/Card'
 import { Spinner } from '@/components/ui/Spinner'
-import { COURSES } from '@/lib/utils'
+import { Badge } from '@/components/ui/Badge'
+import { formatDateTime } from '@/lib/utils'
 import {
   Users, Clock, CalendarDays, CheckCircle,
-  TrendingUp, ArrowUpRight
+  TrendingUp, ArrowUpRight, UserCheck, ChevronRight
 } from 'lucide-react'
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis,
@@ -22,47 +24,42 @@ interface Stats {
   pending: number
   counselingScheduled: number
   admitted: number
+  registeredStudents: number
 }
 
 interface CourseData { name: string; value: number }
 interface MonthData { month: string; count: number }
 
+interface StudentProfile {
+  id: string
+  full_name: string | null
+  email: string | null
+  last_login_at: string | null
+  created_at: string
+}
+
 export default function AdminDashboard() {
+  const router = useRouter()
   const [stats, setStats] = useState<Stats | null>(null)
   const [courseData, setCourseData] = useState<CourseData[]>([])
   const [monthData, setMonthData] = useState<MonthData[]>([])
+  const [recentStudents, setRecentStudents] = useState<StudentProfile[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     const fetchData = async () => {
       const supabase = createClient()
 
-      const [appsRes, counselingRes] = await Promise.all([
+      const [appsRes, counselingRes, studentsRes, studentsCountRes] = await Promise.all([
         supabase.from('applications').select('status, preferred_course, created_at'),
         supabase.from('counseling_sessions').select('status', { count: 'exact' }).eq('status', 'scheduled'),
+        supabase.from('student_profiles').select('*').order('created_at', { ascending: false }).limit(10),
+        supabase.from('student_profiles').select('*', { count: 'exact', head: true }),
       ])
 
-      let apps = appsRes.data || []
-      let counselingCount = counselingRes.count || 0
-
-      // Inject dummy data if DB is empty to populate charts and stats
-      if (apps.length === 0) {
-        apps = [
-          { status: 'pending', preferred_course: 'B.Tech Computer Science', created_at: new Date(Date.now() - 5*86400000).toISOString() },
-          { status: 'approved', preferred_course: 'B.Tech Cyber Security', created_at: new Date(Date.now() - 35*86400000).toISOString() },
-          { status: 'reviewing', preferred_course: 'B.Tech Artificial Intelligence', created_at: new Date(Date.now() - 65*86400000).toISOString() },
-          { status: 'pending', preferred_course: 'B.Tech Information Technology', created_at: new Date(Date.now() - 15*86400000).toISOString() },
-          { status: 'approved', preferred_course: 'B.Tech Computer Science', created_at: new Date(Date.now() - 85*86400000).toISOString() },
-          { status: 'rejected', preferred_course: 'B.Tech Data Science', created_at: new Date(Date.now() - 45*86400000).toISOString() },
-          { status: 'reviewing', preferred_course: 'B.Tech Artificial Intelligence', created_at: new Date(Date.now() - 10*86400000).toISOString() },
-          { status: 'approved', preferred_course: 'B.Tech Cyber Security', created_at: new Date(Date.now() - 110*86400000).toISOString() },
-          { status: 'pending', preferred_course: 'B.Tech Computer Science', created_at: new Date(Date.now() - 140*86400000).toISOString() },
-          { status: 'approved', preferred_course: 'B.Tech Data Science', created_at: new Date(Date.now() - 25*86400000).toISOString() },
-          { status: 'reviewing', preferred_course: 'B.Tech Computer Science', created_at: new Date(Date.now() - 55*86400000).toISOString() },
-          { status: 'rejected', preferred_course: 'B.Tech Information Technology', created_at: new Date(Date.now() - 120*86400000).toISOString() },
-        ]
-        if (counselingCount === 0) counselingCount = 4
-      }
+      const apps = appsRes.data || []
+      const students = studentsRes.data || []
+      const totalStudents = studentsCountRes.count || 0
 
       // Stats
       setStats({
@@ -70,7 +67,10 @@ export default function AdminDashboard() {
         pending: apps.filter(a => a.status === 'pending' || a.status === 'reviewing').length,
         counselingScheduled: counselingRes.count || 0,
         admitted: apps.filter(a => a.status === 'approved').length,
+        registeredStudents: totalStudents,
       })
+
+      setRecentStudents(students)
 
       // By course
       const courseCounts: Record<string, number> = {}
@@ -97,10 +97,10 @@ export default function AdminDashboard() {
   }, [])
 
   const statCards = [
-    { label: 'Total Applications', value: stats?.total || 0, icon: Users, color: 'from-violet-600 to-indigo-600', shadow: 'shadow-violet-500/25', change: '+12% this month' },
+    { label: 'Registered Students', value: stats?.registeredStudents || 0, icon: UserCheck, color: 'from-pink-600 to-rose-600', shadow: 'shadow-pink-500/25', change: 'All signups' },
+    { label: 'Total Applications', value: stats?.total || 0, icon: Users, color: 'from-violet-600 to-indigo-600', shadow: 'shadow-violet-500/25', change: 'Submitted forms' },
     { label: 'Pending Review', value: stats?.pending || 0, icon: Clock, color: 'from-amber-600 to-orange-600', shadow: 'shadow-amber-500/25', change: 'Needs attention' },
-    { label: 'Counseling Scheduled', value: stats?.counselingScheduled || 0, icon: CalendarDays, color: 'from-blue-600 to-cyan-600', shadow: 'shadow-blue-500/25', change: 'Upcoming sessions' },
-    { label: 'Admitted Students', value: stats?.admitted || 0, icon: CheckCircle, color: 'from-emerald-600 to-teal-600', shadow: 'shadow-emerald-500/25', change: 'Offer letters sent' },
+    { label: 'Admitted Students', value: stats?.admitted || 0, icon: CheckCircle, color: 'from-emerald-600 to-teal-600', shadow: 'shadow-emerald-500/25', change: 'Approved' },
   ]
 
   const CustomTooltip = ({ active, payload, label }: { active?: boolean, payload?: { name: string; value: number }[], label?: string }) => {
@@ -113,6 +113,12 @@ export default function AdminDashboard() {
       )
     }
     return null
+  }
+
+  const isOnline = (lastLogin: string | null) => {
+    if (!lastLogin) return false
+    const diff = Date.now() - new Date(lastLogin).getTime()
+    return diff < 15 * 60 * 1000 // Online if logged in within 15 minutes
   }
 
   return (
@@ -144,8 +150,52 @@ export default function AdminDashboard() {
             ))}
           </div>
 
-          {/* Charts */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Recent Students + Charts */}
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+            {/* Recent Students */}
+            <Card className="xl:col-span-1">
+              <div className="flex items-center gap-2 mb-4">
+                <UserCheck className="h-5 w-5 text-pink-400" />
+                <h2 className="text-lg font-semibold text-white">Recent Students</h2>
+              </div>
+              {recentStudents.length === 0 ? (
+                <p className="text-slate-400 text-sm">No students registered yet</p>
+              ) : (
+                <div className="space-y-3 max-h-[320px] overflow-y-auto">
+                  {recentStudents.map(student => (
+                    <div
+                      key={student.id}
+                      className="flex items-center gap-3 p-3 bg-slate-700/50 rounded-xl hover:bg-slate-700 transition-colors cursor-pointer"
+                      onClick={() => router.push(`/admin/students?search=${encodeURIComponent(student.email || '')}`)}
+                    >
+                      <div className="relative">
+                        <div className="w-10 h-10 bg-gradient-to-br from-pink-600 to-rose-600 rounded-full flex items-center justify-center text-white text-sm font-bold">
+                          {student.full_name?.charAt(0)?.toUpperCase() || '?'}
+                        </div>
+                        {isOnline(student.last_login_at) && (
+                          <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-slate-800 rounded-full"></span>
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-white truncate">{student.full_name || 'Unknown'}</p>
+                        <p className="text-xs text-slate-400 truncate">{student.email}</p>
+                        {student.last_login_at && (
+                          <p className="text-xs text-slate-500">
+                            {isOnline(student.last_login_at) ? (
+                              <span className="text-emerald-400">Online now</span>
+                            ) : (
+                              `Last seen: ${formatDateTime(student.last_login_at)}`
+                            )}
+                          </p>
+                        )}
+                      </div>
+                      <ChevronRight className="h-4 w-4 text-slate-600" />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+
             {/* Bar chart */}
             <Card>
               <div className="flex items-center gap-2 mb-6">

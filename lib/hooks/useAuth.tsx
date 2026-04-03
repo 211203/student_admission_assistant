@@ -4,6 +4,25 @@ import React, { createContext, useContext, useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { User } from '@supabase/supabase-js'
 
+export interface StudentProfile {
+  id: string
+  full_name: string | null
+  email: string | null
+  phone: string | null
+  avatar_url: string | null
+  last_login_at: string | null
+}
+
+export interface AdminProfile {
+  id: string
+  full_name: string | null
+  email: string | null
+  phone: string | null
+  avatar_url: string | null
+  department: string | null
+  last_login_at: string | null
+}
+
 export interface Profile {
   id: string
   full_name: string | null
@@ -33,17 +52,51 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true)
   const supabase = createClient()
 
+  const fetchProfile = async (userId: string) => {
+    // Try to get admin profile first
+    const { data: adminData } = await supabase
+      .from('admin_profiles')
+      .select('*')
+      .eq('id', userId)
+      .single()
+
+    if (adminData) {
+      // Update last_login_at for admin
+      await supabase
+        .from('admin_profiles')
+        .update({ last_login_at: new Date().toISOString() })
+        .eq('id', userId)
+
+      return { ...adminData, role: 'admin' as const }
+    }
+
+    // Try student profile
+    const { data: studentData } = await supabase
+      .from('student_profiles')
+      .select('*')
+      .eq('id', userId)
+      .single()
+
+    if (studentData) {
+      // Update last_login_at for student
+      await supabase
+        .from('student_profiles')
+        .update({ last_login_at: new Date().toISOString() })
+        .eq('id', userId)
+
+      return { ...studentData, role: 'student' as const }
+    }
+
+    return null
+  }
+
   useEffect(() => {
     const getUser = async () => {
       const { data: { user } } = await supabase.auth.getUser()
       setUser(user)
       if (user) {
-        const { data } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
-          .single()
-        setProfile(data)
+        const profileData = await fetchProfile(user.id)
+        setProfile(profileData)
       }
       setLoading(false)
     }
@@ -53,12 +106,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setUser(session?.user ?? null)
       if (session?.user) {
-        const { data } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', session.user.id)
-          .single()
-        setProfile(data)
+        const profileData = await fetchProfile(session.user.id)
+        setProfile(profileData)
       } else {
         setProfile(null)
       }

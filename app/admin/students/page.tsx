@@ -7,131 +7,185 @@ import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Spinner } from '@/components/ui/Spinner'
-import { Input, Select } from '@/components/ui/Input'
-import { formatDate, COURSES } from '@/lib/utils'
-import { Users, Search, ChevronRight, SlidersHorizontal, Mail } from 'lucide-react'
+import { Select } from '@/components/ui/Input'
+import { formatDate, formatDateTime } from '@/lib/utils'
+import { STUDENT_DOCUMENTS_BUCKET } from '@/lib/supabase/storage'
+import { Users, Search, ChevronRight, SlidersHorizontal, Cog, FileText, MessageSquare, ClipboardList } from 'lucide-react'
+import toast from 'react-hot-toast'
 
-interface Application {
+interface StudentWithDetails {
   id: string
-  student_id: string
-  full_name: string
-  email: string
-  preferred_course: string
-  academic_background: string
-  entrance_exam_score: number
-  budget_range: string
-  status: string
+  full_name: string | null
+  email: string | null
+  phone: string | null
+  last_login_at: string | null
   created_at: string
-  updated_at: string
+  // Counts from related tables
+  documents_count: number
+  has_application: boolean
+  application_status: string | null
+  chat_messages_count: number
 }
 
 const STATUS_OPTIONS = [
-  { value: 'pending', label: 'Pending' },
-  { value: 'reviewing', label: 'Reviewing' },
-  { value: 'approved', label: 'Approved' },
-  { value: 'rejected', label: 'Rejected' },
+  { value: 'all', label: 'All Students' },
+  { value: 'with_application', label: 'With Application' },
+  { value: 'no_application', label: 'No Application Yet' },
 ]
 
 const PAGE_SIZE = 10
 
-const needsFollowUp = (lastDateString: string | null) => {
-  if (!lastDateString) return true;
-  
-  const lastDate = new Date(lastDateString);
-  const today = new Date();
-  
-  const diffTime = Math.abs(today.getTime() - lastDate.getTime());
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  
-  return diffDays >= 14;
-}
-
-const DUMMY_STUDENTS: Application[] = [
-  {
-    id: 'dummy-1',
-    student_id: 'std-1',
-    full_name: 'Alice Johnson',
-    email: 'alice@example.com',
-    preferred_course: 'B.Tech Computer Science',
-    academic_background: 'High School Diploma with 92% in PCM',
-    entrance_exam_score: 95,
-    budget_range: '$20,000 - $30,000',
-    status: 'pending',
-    created_at: new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString(),
-    updated_at: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString(), // 15 days ago -> needs follow-up
-  },
-  {
-    id: 'dummy-2',
-    student_id: 'std-2',
-    full_name: 'Bob Smith',
-    email: 'bob@example.com',
-    preferred_course: 'B.Tech Information Technology',
-    academic_background: 'Intermediate with 85%',
-    entrance_exam_score: 82,
-    budget_range: '$10,000 - $20,000',
-    status: 'reviewing',
-    created_at: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
-    updated_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(), // 2 days ago -> recently contacted
-  },
-  {
-    id: 'dummy-3',
-    student_id: 'std-3',
-    full_name: 'Charlie Davis',
-    email: 'charlie@example.com',
-    preferred_course: 'B.Tech Electronics',
-    academic_background: 'A-Levels in Physics, Math',
-    entrance_exam_score: 88,
-    budget_range: '$15,000 - $25,000',
-    status: 'approved',
-    created_at: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
-    updated_at: new Date(Date.now() - 28 * 24 * 60 * 60 * 1000).toISOString(), // 28 days ago -> needs follow-up
-  }
-]
-
 export default function StudentsPage() {
   const router = useRouter()
-  const [applications, setApplications] = useState<Application[]>([])
+  const [students, setStudents] = useState<StudentWithDetails[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [courseFilter, setCourseFilter] = useState('')
-  const [statusFilter, setStatusFilter] = useState('')
+  const [statusFilter, setStatusFilter] = useState('all')
   const [page, setPage] = useState(0)
   const [total, setTotal] = useState(0)
+  const [processingId, setProcessingId] = useState<string | null>(null)
 
   useEffect(() => {
-    fetchApplications()
-  }, [search, courseFilter, statusFilter, page])
+    fetchStudents()
+  }, [search, statusFilter, page])
 
-  const fetchApplications = async () => {
+  const fetchStudents = async () => {
     setLoading(true)
     const supabase = createClient()
 
+    // Fetch all student profiles
     let query = supabase
-      .from('applications')
+      .from('student_profiles')
       .select('*', { count: 'exact' })
       .order('created_at', { ascending: false })
+
+    if (search) {
+      query = query.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`)
+    }
+
+    const { data: studentsData, count } = await query
       .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
 
-    if (search) query = query.ilike('full_name', `%${search}%`)
-    if (courseFilter) query = query.eq('preferred_course', courseFilter)
-    if (statusFilter) query = query.eq('status', statusFilter)
-
-    const { data, count } = await query
-
-    if (!data || data.length === 0) {
-      // Use dummy data if database is empty so frontend UI can be tested
-      let filteredDummy = [...DUMMY_STUDENTS]
-      if (search) filteredDummy = filteredDummy.filter(s => s.full_name.toLowerCase().includes(search.toLowerCase()))
-      if (courseFilter) filteredDummy = filteredDummy.filter(s => s.preferred_course === courseFilter)
-      if (statusFilter) filteredDummy = filteredDummy.filter(s => s.status === statusFilter)
-      
-      setApplications(filteredDummy)
-      setTotal(filteredDummy.length)
-    } else {
-      setApplications(data)
-      setTotal(count || 0)
+    if (!studentsData) {
+      setStudents([])
+      setTotal(0)
+      setLoading(false)
+      return
     }
+
+    // Fetch related data for each student
+    const studentIds = studentsData.map(s => s.id)
+
+    const [docsRes, appsRes, chatsRes] = await Promise.all([
+      supabase.from('documents').select('student_id').in('student_id', studentIds),
+      supabase.from('applications').select('student_id, status').in('student_id', studentIds),
+      supabase.from('chat_messages').select('student_id').in('student_id', studentIds),
+    ])
+
+    // Count documents per student
+    const docCounts: Record<string, number> = {}
+    docsRes.data?.forEach(d => {
+      docCounts[d.student_id] = (docCounts[d.student_id] || 0) + 1
+    })
+
+    // Get application status per student
+    const appStatus: Record<string, string> = {}
+    appsRes.data?.forEach(a => {
+      appStatus[a.student_id] = a.status
+    })
+
+    // Count chat messages per student
+    const chatCounts: Record<string, number> = {}
+    chatsRes.data?.forEach(c => {
+      chatCounts[c.student_id] = (chatCounts[c.student_id] || 0) + 1
+    })
+
+    // Combine data
+    let enrichedStudents: StudentWithDetails[] = studentsData.map(s => ({
+      ...s,
+      documents_count: docCounts[s.id] || 0,
+      has_application: !!appStatus[s.id],
+      application_status: appStatus[s.id] || null,
+      chat_messages_count: chatCounts[s.id] || 0,
+    }))
+
+    // Apply status filter
+    if (statusFilter === 'with_application') {
+      enrichedStudents = enrichedStudents.filter(s => s.has_application)
+    } else if (statusFilter === 'no_application') {
+      enrichedStudents = enrichedStudents.filter(s => !s.has_application)
+    }
+
+    setStudents(enrichedStudents)
+    setTotal(count || 0)
     setLoading(false)
+  }
+
+  const processStudent = async (e: React.MouseEvent, student: StudentWithDetails) => {
+    e.stopPropagation()
+    setProcessingId(student.id)
+
+    try {
+      const supabase = createClient()
+
+      // Fetch student's documents
+      const { data: documents } = await supabase
+        .from('documents')
+        .select('*')
+        .eq('student_id', student.id)
+
+      if (!documents || documents.length === 0) {
+        toast.error('No documents found for this student')
+        setProcessingId(null)
+        return
+      }
+
+      // Generate signed URLs for all documents
+      const docsWithUrls = await Promise.all(
+        documents.map(async (doc) => {
+          const { data } = await supabase.storage
+            .from(STUDENT_DOCUMENTS_BUCKET)
+            .createSignedUrl(doc.file_path, 3600)
+          return {
+            docType: doc.document_type,
+            filePath: doc.file_path,
+            fileName: doc.file_name,
+            signedUrl: data?.signedUrl || '',
+          }
+        })
+      )
+
+      // Call n8n webhook
+      const webhookUrl = process.env.NEXT_PUBLIC_N8N_DOCUMENT_WEBHOOK_URL || '/api/extract-documents'
+      const response = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          studentId: student.id,
+          studentName: student.full_name,
+          studentEmail: student.email,
+          documents: docsWithUrls,
+          timestamp: new Date().toISOString(),
+        }),
+      })
+
+      if (response.ok) {
+        toast.success('Student data sent for processing!')
+      } else {
+        toast.error('Failed to process student')
+      }
+    } catch (err) {
+      console.error('Process student error:', err)
+      toast.error('Failed to process student')
+    } finally {
+      setProcessingId(null)
+    }
+  }
+
+  const isOnline = (lastLogin: string | null) => {
+    if (!lastLogin) return false
+    const diff = Date.now() - new Date(lastLogin).getTime()
+    return diff < 15 * 60 * 1000
   }
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
@@ -146,7 +200,7 @@ export default function StudentsPage() {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-white">Students</h1>
-            <p className="text-slate-400 text-sm">{total} total applications</p>
+            <p className="text-slate-400 text-sm">{total} registered students</p>
           </div>
         </div>
       </div>
@@ -157,31 +211,26 @@ export default function StudentsPage() {
           <SlidersHorizontal className="h-4 w-4 text-slate-400" />
           <span className="text-sm font-medium text-slate-300">Filter & Search</span>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
             <input
               suppressHydrationWarning
               value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(0) }}
-              placeholder="Search by name..."
+              placeholder="Search by name or email..."
               className="w-full bg-slate-700/50 border border-slate-600 rounded-xl pl-10 pr-4 py-2.5 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
             />
           </div>
-          <Select
-            options={COURSES.map(c => ({ value: c, label: c }))}
-            value={courseFilter}
-            onChange={(e) => { setCourseFilter(e.target.value); setPage(0) }}
-          />
           <Select
             options={STATUS_OPTIONS}
             value={statusFilter}
             onChange={(e) => { setStatusFilter(e.target.value); setPage(0) }}
           />
         </div>
-        {(search || courseFilter || statusFilter) && (
+        {(search || statusFilter !== 'all') && (
           <button
-            onClick={() => { setSearch(''); setCourseFilter(''); setStatusFilter(''); setPage(0) }}
+            onClick={() => { setSearch(''); setStatusFilter('all'); setPage(0) }}
             className="mt-3 text-xs text-violet-400 hover:text-violet-300 transition-colors"
           >
             Clear all filters
@@ -195,7 +244,7 @@ export default function StudentsPage() {
           <table className="w-full">
             <thead className="bg-slate-700/50">
               <tr>
-                {['Student Name', 'Preferred Course', 'Academic Background', 'Exam Score', 'Budget', 'Status', 'Applied', 'Follow-up', ''].map(col => (
+                {['Student', 'Status', 'Documents', 'Chats', 'Registered', 'Last Active', 'Actions', ''].map(col => (
                   <th key={col} className="text-left px-5 py-3.5 text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap">{col}</th>
                 ))}
               </tr>
@@ -203,72 +252,94 @@ export default function StudentsPage() {
             <tbody className="divide-y divide-slate-700/50">
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="py-16 text-center">
+                  <td colSpan={8} className="py-16 text-center">
                     <Spinner />
                   </td>
                 </tr>
-              ) : applications.length === 0 ? (
+              ) : students.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-16 text-center text-slate-400">
-                    No applications found
+                  <td colSpan={8} className="py-16 text-center text-slate-400">
+                    No students found
                   </td>
                 </tr>
               ) : (
-                applications.map((app) => (
+                students.map((student) => (
                   <tr
-                    key={app.id}
+                    key={student.id}
                     className="hover:bg-slate-700/30 transition-colors cursor-pointer"
-                    onClick={() => router.push(`/admin/students/${app.id}`)}
+                    onClick={() => {
+                      if (student.has_application) {
+                        // Find application and navigate
+                        router.push(`/admin/students?search=${encodeURIComponent(student.email || '')}`)
+                      }
+                    }}
                   >
                     <td className="px-5 py-4">
                       <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 bg-gradient-to-br from-violet-600 to-indigo-600 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0">
-                          {app.full_name?.charAt(0)?.toUpperCase()}
+                        <div className="relative">
+                          <div className="w-10 h-10 bg-gradient-to-br from-violet-600 to-indigo-600 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0">
+                            {student.full_name?.charAt(0)?.toUpperCase() || '?'}
+                          </div>
+                          {isOnline(student.last_login_at) && (
+                            <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-slate-800 rounded-full"></span>
+                          )}
                         </div>
-                        <span className="text-white font-medium text-sm whitespace-nowrap">{app.full_name}</span>
+                        <div>
+                          <span className="text-white font-medium text-sm whitespace-nowrap block">{student.full_name || 'Unknown'}</span>
+                          <span className="text-slate-400 text-xs">{student.email}</span>
+                        </div>
                       </div>
                     </td>
                     <td className="px-5 py-4">
-                      <span className="text-slate-300 text-sm whitespace-nowrap">
-                        {app.preferred_course?.split(' ').slice(0, 3).join(' ')}...
-                      </span>
-                    </td>
-                    <td className="px-5 py-4">
-                      <span className="text-slate-400 text-sm truncate max-w-[160px] block">
-                        {app.academic_background?.substring(0, 50)}...
-                      </span>
-                    </td>
-                    <td className="px-5 py-4">
-                      <span className="text-white font-medium text-sm">{app.entrance_exam_score}</span>
-                    </td>
-                    <td className="px-5 py-4">
-                      <span className="text-slate-300 text-sm whitespace-nowrap">{app.budget_range}</span>
-                    </td>
-                    <td className="px-5 py-4">
-                      <Badge variant="status" status={app.status}>{app.status}</Badge>
-                    </td>
-                    <td className="px-5 py-4">
-                      <span className="text-slate-400 text-xs whitespace-nowrap">{formatDate(app.created_at)}</span>
-                    </td>
-                    <td className="px-5 py-4 whitespace-nowrap">
-                      {needsFollowUp(app.updated_at) ? (
-                        <Button 
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            window.location.href = `mailto:${app.email}?subject=Checking in on your application`
-                          }}
-                          className="bg-amber-600/20 text-amber-500 hover:bg-amber-600/30 hover:text-amber-400 text-xs px-3 py-1 flex items-center gap-2 border border-amber-600/30"
-                        >
-                          <Mail className="w-3 h-3" />
-                          Send Follow-up
-                        </Button>
+                      {student.has_application ? (
+                        <Badge variant="status" status={student.application_status || 'pending'}>
+                          {student.application_status}
+                        </Badge>
                       ) : (
-                        <span className="text-xs text-slate-500 px-3 py-1 flex items-center gap-2">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                          Recently Contacted
+                        <span className="text-xs text-slate-500 bg-slate-700/50 px-2 py-1 rounded-lg">
+                          No application
                         </span>
                       )}
+                    </td>
+                    <td className="px-5 py-4">
+                      <div className="flex items-center gap-1.5">
+                        <FileText className="h-3.5 w-3.5 text-blue-400" />
+                        <span className="text-white text-sm">{student.documents_count}</span>
+                      </div>
+                    </td>
+                    <td className="px-5 py-4">
+                      <div className="flex items-center gap-1.5">
+                        <MessageSquare className="h-3.5 w-3.5 text-emerald-400" />
+                        <span className="text-white text-sm">{student.chat_messages_count}</span>
+                      </div>
+                    </td>
+                    <td className="px-5 py-4">
+                      <span className="text-slate-400 text-xs whitespace-nowrap">{formatDate(student.created_at)}</span>
+                    </td>
+                    <td className="px-5 py-4">
+                      <span className="text-slate-400 text-xs whitespace-nowrap">
+                        {student.last_login_at ? (
+                          isOnline(student.last_login_at) ? (
+                            <span className="text-emerald-400">Online</span>
+                          ) : (
+                            formatDateTime(student.last_login_at)
+                          )
+                        ) : (
+                          'Never'
+                        )}
+                      </span>
+                    </td>
+                    <td className="px-5 py-4 whitespace-nowrap">
+                      <Button 
+                        size="sm"
+                        onClick={(e) => processStudent(e, student)}
+                        loading={processingId === student.id}
+                        disabled={student.documents_count === 0}
+                        className="bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-xs px-3 py-1.5 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <Cog className="w-3 h-3" />
+                        Process
+                      </Button>
                     </td>
                     <td className="px-5 py-4">
                       <ChevronRight className="h-4 w-4 text-slate-600" />

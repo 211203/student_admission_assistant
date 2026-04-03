@@ -9,8 +9,8 @@ import { useAuth } from '@/lib/hooks/useAuth'
 import { Button } from '@/components/ui/Button'
 import { Input, Select, Textarea } from '@/components/ui/Input'
 import { Card } from '@/components/ui/Card'
-import { COURSES } from '@/lib/utils'
-import { FileText, SendHorizonal, CheckCircle } from 'lucide-react'
+import { COURSES, ACADEMIC_STREAMS } from '@/lib/utils'
+import { FileText, SendHorizonal, CheckCircle, Info } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 const schema = z.object({
@@ -18,10 +18,8 @@ const schema = z.object({
   email: z.string().email('Valid email is required'),
   phone: z.string().min(10, 'Valid phone number is required'),
   preferredCourse: z.string().min(1, 'Please select a course'),
-  academicBackground: z.string().min(10, 'Please provide your academic background'),
-  entranceExamScore: z.string().refine(v => !isNaN(Number(v)) && Number(v) >= 0 && Number(v) <= 100, 'Score must be between 0 and 100'),
+  academicStream: z.string().min(1, 'Please select your academic stream'),
   preferredIntakeYear: z.string().min(1, 'Please select an intake year'),
-  budgetRange: z.string().min(1, 'Please select a budget range'),
   questions: z.string().optional(),
 })
 
@@ -33,27 +31,32 @@ const INTAKE_YEARS = [
   { value: '2027', label: '2027' },
 ]
 
-const BUDGET_RANGES = [
-  { value: 'Under ₹2 Lakh', label: 'Under ₹2 Lakh' },
-  { value: '₹2–5 Lakh', label: '₹2–5 Lakh' },
-  { value: '₹5–10 Lakh', label: '₹5–10 Lakh' },
-  { value: '₹10–20 Lakh', label: '₹10–20 Lakh' },
-  { value: 'Above ₹20 Lakh', label: 'Above ₹20 Lakh' },
-]
 
 export default function ApplyPage() {
   const { profile } = useAuth()
   const [submitted, setSubmitted] = useState(false)
   const [loading, setLoading] = useState(false)
 
-  const { register, handleSubmit, formState: { errors } } = useForm<FormData>({
+  const { register, handleSubmit, watch, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
       fullName: profile?.full_name || '',
       email: profile?.email || '',
       phone: profile?.phone || '',
+      academicStream: '',
     },
   })
+
+  const selectedStream = watch('academicStream')
+
+  const getRequiredExams = (stream: string) => {
+    const examMap: Record<string, string[]> = {
+      PCM: ['JEE', 'MHT-CET'],
+      PCB: ['NEET', 'MHT-CET'],
+      PCMB: ['JEE', 'NEET', 'MHT-CET'],
+    }
+    return examMap[stream] || []
+  }
 
   const onSubmit = async (data: FormData) => {
     setLoading(true)
@@ -68,17 +71,23 @@ export default function ApplyPage() {
         email: data.email,
         phone: data.phone,
         preferred_course: data.preferredCourse,
-        academic_background: data.academicBackground,
-        entrance_exam_score: parseFloat(data.entranceExamScore),
+        academic_stream: data.academicStream,
         preferred_intake_year: data.preferredIntakeYear,
-        budget_range: data.budgetRange,
         questions: data.questions || '',
         status: 'pending',
       }
 
       // Save to Supabase
-      const { error } = await supabase.from('applications').insert(payload)
-      if (error) throw error
+      const { error } = await supabase.from('applications').insert([payload])
+      if (error) {
+        console.error('[apply] Supabase insert error', {
+          message: error.message,
+          code: (error as any).code,
+          details: (error as any).details,
+          hint: (error as any).hint,
+        })
+        throw error
+      }
 
       // Send to n8n webhook
       try {
@@ -150,37 +159,33 @@ export default function ApplyPage() {
         <Card>
           <h2 className="text-lg font-semibold text-white mb-5">Academic Information</h2>
           <div className="space-y-5">
-            <Select
-              label="Preferred Course *"
-              options={COURSES.map(c => ({ value: c, label: c }))}
-              error={errors.preferredCourse?.message}
-              {...register('preferredCourse')}
-            />
-            <Textarea
-              label="Academic Background *"
-              placeholder="Describe your educational history, qualifications, and achievements..."
-              rows={4}
-              error={errors.academicBackground?.message}
-              {...register('academicBackground')}
-            />
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              <Input
-                label="Entrance Exam Score (0-100) *"
-                type="number"
-                min="0"
-                max="100"
-                step="0.01"
-                placeholder="85.5"
-                error={errors.entranceExamScore?.message}
-                {...register('entranceExamScore')}
+              <Select
+                label="Academic Stream *"
+                options={ACADEMIC_STREAMS}
+                error={errors.academicStream?.message}
+                {...register('academicStream')}
               />
               <Select
-                label="Budget Range *"
-                options={BUDGET_RANGES}
-                error={errors.budgetRange?.message}
-                {...register('budgetRange')}
+                label="Preferred Course *"
+                options={COURSES.map(c => ({ value: c, label: c }))}
+                error={errors.preferredCourse?.message}
+                {...register('preferredCourse')}
               />
             </div>
+
+            {selectedStream && (
+              <div className="flex items-start gap-3 p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
+                <Info className="h-5 w-5 text-blue-400 shrink-0 mt-0.5" />
+                <div className="text-sm">
+                  <p className="text-blue-400 font-medium">Required Entrance Exam Documents</p>
+                  <p className="text-slate-300 mt-1">
+                    Based on your {selectedStream} stream, you will need to upload:{' '}
+                    <strong className="text-white">{getRequiredExams(selectedStream).join(', ')}</strong> scorecards in the Documents section after submitting this application.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         </Card>
 

@@ -11,7 +11,7 @@ import { formatDate, formatDateTime } from '@/lib/utils'
 import { STUDENT_DOCUMENTS_BUCKET } from '@/lib/supabase/storage'
 import {
   ArrowLeft, User, FileText, MessageSquare, CheckCircle,
-  XCircle, CalendarDays, Mail, Download, Clock, Phone, BookOpen
+  XCircle, CalendarDays, Mail, Download, Clock, Phone, BookOpen, Cog
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -39,9 +39,14 @@ interface ChatMessage { id: string; message: string; role: string; created_at: s
 const DOC_LABELS: Record<string, string> = {
   '10th_marksheet': '10th Marksheet',
   '12th_marksheet': '12th Marksheet',
-  'entrance_exam_scorecard': 'Entrance Exam Scorecard',
-  'id_proof': 'ID Proof',
+  'leaving_certificate': 'Leaving Certificate (LC/TC)',
+  'mht_cet_scorecard': 'MHT-CET Scorecard',
+  'jee_scorecard': 'JEE Scorecard',
+  'id_proof': 'ID Proof (Aadhar/PAN)',
   'photo': 'Passport Photo',
+  'caste_certificate': 'Caste Certificate',
+  'income_certificate': 'Income Certificate',
+  'gap_certificate': 'Gap Certificate',
 }
 
 export default function StudentDetailPage() {
@@ -51,6 +56,7 @@ export default function StudentDetailPage() {
   const [documents, setDocuments] = useState<Document[]>([])
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([])
   const [loading, setLoading] = useState(true)
+  const [processing, setProcessing] = useState(false)
   const [updating, setUpdating] = useState<string | null>(null)
   const [adminNotes, setAdminNotes] = useState('')
 
@@ -128,6 +134,57 @@ export default function StudentDetailPage() {
       if (data?.signedUrl) window.open(data.signedUrl, '_blank')
     } catch {
       toast.error('Failed to download document')
+    }
+  }
+
+  const processDocuments = async () => {
+    if (documents.length === 0) {
+      toast.error('No documents to process')
+      return
+    }
+
+    setProcessing(true)
+    try {
+      const supabase = createClient()
+      
+      // Generate signed URLs for all documents
+      const docsWithUrls = await Promise.all(
+        documents.map(async (doc) => {
+          const { data } = await supabase.storage
+            .from(STUDENT_DOCUMENTS_BUCKET)
+            .createSignedUrl(doc.file_path, 3600) // 1 hour validity
+          return {
+            docType: doc.document_type,
+            filePath: doc.file_path,
+            fileName: doc.file_name,
+            signedUrl: data?.signedUrl || '',
+          }
+        })
+      )
+
+      const webhookUrl = process.env.NEXT_PUBLIC_N8N_DOCUMENT_WEBHOOK_URL || '/api/extract-documents'
+      const response = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          studentId: application?.student_id,
+          studentName: application?.full_name,
+          studentEmail: application?.email,
+          documents: docsWithUrls,
+          timestamp: new Date().toISOString(),
+        }),
+      })
+
+      if (response.ok) {
+        toast.success('Documents sent for text extraction!')
+      } else {
+        toast.error('Failed to process documents')
+      }
+    } catch (err) {
+      console.error('Process documents error:', err)
+      toast.error('Failed to process documents')
+    } finally {
+      setProcessing(false)
     }
   }
 
@@ -290,32 +347,42 @@ export default function StudentDetailPage() {
             <div className="flex items-center gap-2 mb-4">
               <FileText className="h-4 w-4 text-blue-400" />
               <h2 className="text-lg font-semibold text-white">Documents</h2>
-              <span className="text-xs text-slate-400 ml-auto">{documents.length}/5</span>
+              <span className="text-xs text-slate-400 ml-auto">{documents.length}/10</span>
             </div>
             {documents.length === 0 ? (
               <p className="text-slate-400 text-sm">No documents uploaded yet</p>
             ) : (
-              <div className="space-y-3">
-                {documents.map(doc => (
-                  <div key={doc.id} className="flex items-center gap-3 p-3 bg-slate-700/50 rounded-xl">
-                    <div className="w-8 h-8 bg-blue-500/20 rounded-lg flex items-center justify-center shrink-0">
-                      <FileText className="h-4 w-4 text-blue-400" />
+              <>
+                <div className="space-y-3">
+                  {documents.map(doc => (
+                    <div key={doc.id} className="flex items-center gap-3 p-3 bg-slate-700/50 rounded-xl">
+                      <div className="w-8 h-8 bg-blue-500/20 rounded-lg flex items-center justify-center shrink-0">
+                        <FileText className="h-4 w-4 text-blue-400" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-slate-300">{DOC_LABELS[doc.document_type] || doc.document_type}</p>
+                        <p className="text-xs text-slate-500 truncate">{doc.file_name}</p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => downloadDoc(doc)}
+                        className="p-2 shrink-0"
+                      >
+                        <Download className="h-3.5 w-3.5 text-slate-400 hover:text-white" />
+                      </Button>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-slate-300">{DOC_LABELS[doc.document_type] || doc.document_type}</p>
-                      <p className="text-xs text-slate-500 truncate">{doc.file_name}</p>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => downloadDoc(doc)}
-                      className="p-2 shrink-0"
-                    >
-                      <Download className="h-3.5 w-3.5 text-slate-400 hover:text-white" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+                <Button
+                  onClick={processDocuments}
+                  loading={processing}
+                  className="w-full mt-4 gap-2 bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500"
+                >
+                  <Cog className="h-4 w-4" />
+                  Process Documents
+                </Button>
+              </>
             )}
           </Card>
         </div>
